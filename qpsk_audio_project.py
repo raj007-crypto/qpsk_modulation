@@ -19,6 +19,7 @@ OUTPUT (folder  qpsk_audio_results/ )
     fig3_constellation.png
     fig4_ber_vs_ebn0.png
     fig5_audio_quality_vs_ebn0.png
+    fig6_awgn_waveforms_by_snr.png   <- QPSK carrier + AWGN at 3 chosen Eb/N0 (WAVEFORM_DB)
     original_8bit.wav, recovered_ebn0_XXdB.wav   <- LISTEN TO THESE
     results_table.csv
 
@@ -59,7 +60,8 @@ EB = 1.0                   # energy per bit (normalised)
 ES = 2 * EB                # energy per symbol
 A = np.sqrt(ES / TS)       # carrier amplitude factor
 SWEEP_DB = [0, 2, 4, 6, 8, 10, 12]     # Eb/N0 values tested on the audio
-DEMO_DB = [0, 4, 8, 12]                # values shown in the plots
+DEMO_DB = [0, 4, 8, 12]                # values shown in the audio plot (Fig. 1)
+WAVEFORM_DB = [0, 4, 12]               # Eb/N0 values drawn in the QPSK+AWGN waveform plot (Fig. 6)
 OUT_DIR = "qpsk_audio_results"
 rng = np.random.default_rng(1)         # fixed seed -> repeatable results
 
@@ -339,6 +341,44 @@ def fig_quality(rows):
     plt.close(fig)
 
 
+def fig_awgn_waveforms(bits, I, Q, levels=WAVEFORM_DB, n_sym=8, sps_plot=64, start_sym=17600):
+    """QPSK carrier after the AWGN channel, one row per Eb/N0, same 8 symbols in every row.
+    The clean carrier is drawn in red underneath so the effect of the noise is visible.
+    Each row is also demodulated, so you can see the decoded result for that window."""
+    start_sym = min(start_sym, max(0, len(I) - n_sym))
+    Ii, Qi = I[start_sym:start_sym + n_sym], Q[start_sym:start_sym + n_sym]
+    tx_bits = bits[2 * start_sym: 2 * start_sym + 2 * n_sym]
+    s = modulate(Ii, Qi, sps=sps_plot)
+    t = np.arange(n_sym * sps_plot) / sps_plot * 2            # 1 symbol = 2 bit periods
+    nb = 2 * n_sym
+
+    fig, ax = plt.subplots(1 + len(levels), 1, figsize=(10, 1.9 * (1 + len(levels))),
+                           sharex=True, constrained_layout=True)
+    ax[0].plot(t, s.ravel(), color="red", lw=1.3)
+    ax[0].set_title("Transmitted QPSK carrier (no noise)", fontsize=10)
+
+    for a, db in zip(ax[1:], levels):
+        N0 = EB / (10 ** (db / 10))
+        r = s + np.sqrt(N0 / 2 * sps_plot) * rng.standard_normal(s.shape)
+        _, _, rx_bits = demodulate(r, sps=sps_plot)                # decode this window
+        n_err = int(np.sum(rx_bits != tx_bits))
+        a.plot(t, r.ravel(), color="gray", lw=0.7, label="received (with AWGN)")
+        a.plot(t, s.ravel(), color="red", lw=1.0, alpha=0.8, label="clean carrier")
+        a.set_title(f"Eb/N0 = {db} dB  -  bit errors in this window: {n_err} / {nb}", fontsize=10)
+    ax[1].legend(loc="upper right", fontsize=8, ncol=2)
+
+    for a in ax:
+        a.set_xlim(0, nb); a.grid(True, ls="--", alpha=0.4); a.set_ylabel("Amplitude")
+        for k in range(0, nb + 1, 2):
+            a.axvline(k, color="k", lw=0.4, alpha=0.4)
+    ax[-1].set_xlabel("Time (bit periods; dotted lines = symbol boundaries)")
+    fig.suptitle("QPSK carrier after the AWGN channel at different Eb/N0\n"
+                 "(the noise looks large because it is wideband; the receiver integrates over each "
+                 "symbol, which averages most of it out)", fontsize=11)
+    fig.savefig(f"{OUT_DIR}/fig6_awgn_waveforms_by_snr.png", dpi=170)
+    plt.close(fig)
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -391,6 +431,7 @@ def main():
     fig_constellation(clean, [(db, store[db][0]) for db in [8, 4, 0]])
     fig_ber([(r["ebn0"], r["ber"]) for r in rows])
     fig_quality(rows)
+    fig_awgn_waveforms(bits, I, Q)
     print(f"\nDone. Everything is saved in the folder '{OUT_DIR}/'.")
     print("Listen to original_8bit.wav and the recovered_ebn0_XXdB.wav files to hear the effect of noise.")
 
